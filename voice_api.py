@@ -22,6 +22,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = FastAPI(title="Voice Web API")
 
+# Keep short in-memory histories per session
+SESSIONS = {}  # session_id -> [{"role":"system/user/assistant","content":...}, ...]
+MAX_TURNS = 10
+
+
 # CORS: permissive for simplicity (you can tighten later)
 app.add_middleware(
     CORSMiddleware,
@@ -75,19 +80,28 @@ def health():
 @app.post("/chat")
 def chat(inp: ChatIn):
     try:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": inp.text},
-        ]
+        history = SESSIONS.get(inp.session_id)
+        if not history:
+            history = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # append user message
+        history.append({"role": "user", "content": inp.text})
+
         resp = client.chat.completions.create(
             model=OPENAI_CHAT_MODEL,
-            messages=messages,
-            temperature=0.3,
+            messages=history[-(2*MAX_TURNS+1):],  # system + last N user/assistant turns
+            temperature=0.7,       # a touch more creative
+            presence_penalty=0.2,  # gently encourage variation
         )
         reply = resp.choices[0].message.content
+
+        # append assistant reply and store
+        history.append({"role": "assistant", "content": reply})
+        SESSIONS[inp.session_id] = history[-(2*MAX_TURNS+1):]
+
         return {"reply": reply}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error":"server_error","message":str(e)})
+
 
 @app.post("/stt")
 async def stt(file: UploadFile = File(...)):
