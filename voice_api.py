@@ -128,13 +128,13 @@ async def stt(file: UploadFile = File(...)):
 @app.post("/tts")
 async def tts(text: str = Form(...)):
     try:
-        if not text or not text.strip():
+        safe_text = (text or "").strip()
+        if not safe_text:
             return JSONResponse(status_code=400, content={"error":"tts_error","message":"Empty text"})
 
-        # Limit length so TTS doesn't crash
-        safe_text = text.strip()
-        if len(safe_text) > 500:
-            safe_text = safe_text[:500]
+        # Limit to 300–400 chars; edge-tts can break on long/complex strings
+        if len(safe_text) > 400:
+            safe_text = safe_text[:400]
 
         communicate = edge_tts.Communicate(safe_text, TTS_VOICE)
         mp3_bytes = b""
@@ -142,9 +142,11 @@ async def tts(text: str = Form(...)):
             if chunk["type"] == "audio":
                 mp3_bytes += chunk["data"]
 
+        if not mp3_bytes:
+            return JSONResponse(status_code=500, content={"error":"tts_error","message":"No audio generated"})
+
         return Response(content=mp3_bytes, media_type="audio/mpeg")
 
     except Exception as e:
-        import traceback; print("TTS ERROR:", e); print(traceback.format_exc())
+        import traceback; traceback.print_exc()
         return JSONResponse(status_code=500, content={"error":"tts_error","message":str(e)})
-
