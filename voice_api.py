@@ -16,7 +16,7 @@ if not OPENAI_API_KEY:
 
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_STT_MODEL  = os.getenv("OPENAI_STT_MODEL", "whisper-1")  # rock-solid Whisper
-TTS_VOICE         = os.getenv("TTS_VOICE", "en-US-AriaNeural")
+_VOICE         = os.getenv("_VOICE", "en-US-AriaNeural")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -127,20 +127,24 @@ async def stt(file: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts(text: str = Form(...)):
-    # Returns MP3 of provided text using Edge-TTS
     try:
-        communicate = edge_tts.Communicate(text, TTS_VOICE)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
-        await communicate.save(tmp_path)
-        try:
-            with open(tmp_path, "rb") as f:
-                data = f.read()
-        finally:
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-        return StreamingResponse(io.BytesIO(data), media_type="audio/mpeg")
+        if not text or not text.strip():
+            return JSONResponse(status_code=400, content={"error":"tts_error","message":"Empty text"})
+
+        # Limit length so TTS doesn't crash
+        safe_text = text.strip()
+        if len(safe_text) > 500:
+            safe_text = safe_text[:500]
+
+        communicate = edge_tts.Communicate(safe_text, TTS_VOICE)
+        mp3_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3_bytes += chunk["data"]
+
+        return Response(content=mp3_bytes, media_type="audio/mpeg")
+
     except Exception as e:
+        import traceback; print("TTS ERROR:", e); print(traceback.format_exc())
         return JSONResponse(status_code=500, content={"error":"tts_error","message":str(e)})
+
